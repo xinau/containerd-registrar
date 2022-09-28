@@ -1,0 +1,61 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: containerd-registrar-agent
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: containerd-registrar-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: containerd-registrar
+    app.kubernetes.io/version: latest
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: containerd-registrar-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: containerd-registrar-agent
+        app.kubernetes.io/component: agent
+        app.kubernetes.io/part-of: containerd-registrar
+        app.kubernetes.io/version: latest
+    spec:
+      containers:
+        - image: "gcr.io/google-containers/pause:3.2"
+          name: pause
+      initContainers:
+        - name: agent
+          image: xinau/containerd-registrar:latest
+          imagePullPolicy: Always
+          args:
+            - "agent"
+            - "--binary.name=/usr/bin/containerd"
+            - "--config.file=/etc/containerd/config.toml"
+            - "--registry.path=/etc/containerd/certs.d"
+            - "--registry.hosts=/etc/registrar/hosts.toml"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: etc-containerd
+              mountPath: /etc/containerd
+            - name: etc-registrar
+              mountPath: /etc/registrar
+              readOnly: true
+      hostPID: true
+      volumes:
+        - name: etc-containerd
+          hostPath:
+            path: /etc/containerd
+        - name: etc-registrar
+          configMap:
+            name: containerd-registrar-registries
+            items:
+              - key: hosts.toml
+                path: hosts.toml
+      tolerations:
+        - key: node.containerd-registrar.io/agent-not-ready
+          effect: NoSchedule
+          operator: Exists
+  updateStrategy:
+    type: RollingUpdate

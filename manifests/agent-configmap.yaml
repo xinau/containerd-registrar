@@ -1,0 +1,20 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: containerd-registrar-registries
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: containerd-registrar-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: containerd-registrar
+    app.kubernetes.io/version: latest
+data:
+  hosts.toml: |
+    server = "https://docker.io"
+
+    [host."https://mirror.gcr.io"]
+      capabilities = ["pull"] 
+
+    [host."https://registry-1.docker.io"]
+      capabilities = ["pull"] 

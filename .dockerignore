@@ -1,0 +1,6 @@
+.gitignore
+.vscode/*
+Makefile
+manifests/*
+out/*
+README.md
