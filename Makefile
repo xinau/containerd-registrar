@@ -7,14 +7,18 @@ IMAGE    = xinau/containerd-registrar
 .PHONY: build
 build:
 	docker build . \
-		--tag $(IMAGE):$(VERSION) \
-		--tag $(IMAGE):latest \
+		--tag docker.io/$(IMAGE):$(VERSION) \
+		--tag docker.io/$(IMAGE):latest \
+		--tag ghcr.io/$(IMAGE):$(VERSION) \
+		--tag ghcr.io/$(IMAGE):latest \
 		--build-arg LDFLAGS=$(LDFLAGS)
 
 .PHONY: publish
 publish: build
-	docker push $(IMAGE):$(VERSION)
-	docker push $(IMAGE):latest
+	docker push docker.io/$(IMAGE):$(VERSION)
+	docker push docker.io/$(IMAGE):latest
+	docker push ghcr.io/$(IMAGE):$(VERSION)
+	docker push ghcr.io/$(IMAGE):latest
 
 .PHONY: deploy
 deploy: publish

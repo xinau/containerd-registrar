@@ -12,6 +12,7 @@ RUN go build \
 FROM busybox:stable-glibc
 
 LABEL org.opencontainers.image.author="Felix Ehrenpfort <felix@ehrenpfort.de>"
+LABEL org.opencontainers.image.source="https://github.com/xinau/containerd-registrar"
 
 COPY --from=0 /lib/x86_64-linux-gnu/libdl.so.2     /lib/libdl.so.2
 COPY --from=0 /lib/x86_64-linux-gnu/libdl-2.31.so  /lib/libdl-2.31.so
