@@ -2,5 +2,6 @@
 .vscode/*
 Makefile
 manifests/*
+notes/*
 out/*
 README.md
