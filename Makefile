@@ -1,5 +1,5 @@
 MODULE   = $(shell go list -m)
-VERSION  = $(shell git describe --tags --abbrev=0 --match=v* 2> /dev/null || echo "latest")
+VERSION  = $(shell git describe --tags --match=v* 2> /dev/null)
 REVISION = $(shell git rev-parse HEAD)
 LDFLAGS  = "-X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/internal/version.Revision=$(REVISION)"
 IMAGE    = xinau/containerd-registrar

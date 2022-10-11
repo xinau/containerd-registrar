@@ -27,9 +27,9 @@ spec:
         imagePullPolicy: Always
         args:
           - "controller"
-          - "--agent.labels=app.kubernetes.io/name=containerd-registrar-controller"
-          - "--agent.namespace=kube-system"
-          - "--agent.nodetaint=node.containerd-registrar.io/agent-not-ready"
+          - "--agent-node-taint-key=node.containerd-registrar.io/agent-not-ready"
+          - "--agent-pod-namespace=kube-system"
+          - "--agent-pod-labels=app.kubernetes.io/name=containerd-registrar-controller"
         resources:
           requests:
             memory: 128Mi

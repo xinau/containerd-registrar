@@ -16,23 +16,23 @@ var agentCommand = &cli.Command{
 	Usage: "run agent configuring containerd's registries",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:  "binary.name",
-			Usage: "containerd binary name",
+			Name:  "containerd-binary",
+			Usage: "name of the containerd binary to be restarted",
 			Value: "/usr/bin/containerd",
 		},
 		&cli.GenericFlag{
-			Name:  "config.file",
-			Usage: "containerd config filepath",
+			Name:  "containerd-config-file",
+			Usage: "path to containerd's configuration file",
 			Value: flags.NewFile("/etc/containerd/config.toml"),
 		},
 		&cli.StringFlag{
-			Name:  "registry.path",
-			Usage: "containerd cri registry config directory",
+			Name:  "containerd-cri-registry-path",
+			Usage: "value being set as containerd cri registry path",
 			Value: "/etc/containerd/certs.d",
 		},
 		&cli.GenericFlag{
-			Name:     "registry.hosts",
-			Usage:    "containerd cri registry hosts files",
+			Name:     "containerd-cri-registry-files",
+			Usage:    "files to copy to containerd cri registry path",
 			Value:    flags.NewFileSlice(),
 			Required: true,
 		},
@@ -46,10 +46,10 @@ var agentCommand = &cli.Command{
 		logrus.SetLevel(ctx.Value("log.level").(logrus.Level))
 
 		mgr := agent.NewManager(agent.Config{
-			BinaryName:     ctx.String("binary.name"),
-			ConfigFile:     ctx.String("config.file"),
-			RegistryPath:   ctx.Value("registry.path").(string),
-			RegistryHosts:  ctx.Value("registry.hosts").([]string),
+			BinaryName:     ctx.String("containerd-binary"),
+			ConfigFile:     ctx.String("containerd-config-file"),
+			RegistryPath:   ctx.String("containerd-cri-registry-path"),
+			RegistryHosts:  ctx.StringSlice("containerd-cri-registry-files"),
 			RestartTimeout: ctx.Duration("restart.timout"),
 		})
 

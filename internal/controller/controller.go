@@ -2,24 +2,68 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
-	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 )
 
+var (
+	nodeStateAnnotation = "node.containerd-registrar.io/node-state"
+
+	nodeNameIndexer = "node-name-indexer"
+)
+
+func getObjectFromStoreByKey(store cache.Store, key string) (interface{}, bool) {
+	obj, exists, err := store.GetByKey(key)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, false
+	}
+
+	if !exists || obj == nil {
+		return nil, false
+	}
+
+	return obj, true
+}
+
+func hasTaintWithKey(node *corev1.Node, key string) bool {
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func indexByNodeName(obj interface{}) ([]string, error) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil, fmt.Errorf("obj isn't of type *corev1.Pod, got: %T", obj)
+	}
+	return []string{pod.Spec.NodeName}, nil
+}
+
+func withLabelSelector(ls string) informers.SharedInformerOption {
+	return informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+		opts.LabelSelector = ls
+	})
+}
+
 type Config struct {
-	AgentLabels    string
-	AgentNamespace string
-	AgentNodeTaint string
-	ResyncInterval time.Duration
+	AgentNodeTaint    string
+	AgentPodNamespace string
+	AgentPodLabels    string
+	ResyncInterval    time.Duration
 }
 
 type Manager struct {
@@ -39,180 +83,138 @@ func NewManager(client *kubernetes.Clientset, cfg Config) *Manager {
 	}
 }
 
-func hasNodeTaint(node *corev1.Node, check string) bool {
-	for _, taint := range node.Spec.Taints {
-		if taint.Key == check {
-			return true
-		}
-	}
-	return false
-}
-
-func hasPodCondition(pod *corev1.Pod, check corev1.PodConditionType) bool {
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady {
-			return true
-		}
-	}
-	return false
-}
-
-func (mgr *Manager) isAgentPodRunning(nodeName string) bool {
+func (mgr *Manager) isAgentRunning(nodeName string) bool {
 	pods, err := mgr.podInformer.GetIndexer().ByIndex(nodeNameIndexer, nodeName)
-	if err != nil || len(pods) == 0 {
+	if err != nil {
 		return false
 	}
 
 	for _, obj := range pods {
 		pod := obj.(*corev1.Pod)
-		if hasPodCondition(pod, corev1.PodReady) && pod.Status.Phase == corev1.PodRunning {
-			return true
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				return true
+			}
 		}
 	}
 
 	return false
 }
 
-func (mgr *Manager) removeAgentNodeTaint(ctx context.Context, node *corev1.Node) {
-	var found bool
+type patch struct {
+	OP    string      `json:"op,omitempty"`
+	Path  string      `json:"path,omitempty"`
+	Value interface{} `json:"value"`
+}
+
+var escapePatchPath = strings.NewReplacer(
+	"~", "~0",
+	"/", "~1",
+).Replace
+
+func (mgr *Manager) markNodeAsReady(ctx context.Context, node *corev1.Node) error {
 	var taints []corev1.Taint
 	for _, taint := range node.Spec.Taints {
 		if taint.Key != mgr.cfg.AgentNodeTaint {
 			taints = append(taints, taint)
-		} else {
-			found = true
 		}
 	}
 
-	if !found {
+	patches := []patch{{
+		OP:    "replace",
+		Path:  fmt.Sprintf("/metadata/annotations/%s", escapePatchPath(nodeStateAnnotation)),
+		Value: "complete",
+	}, {
+		OP:    "replace",
+		Path:  "/spec/taints",
+		Value: taints,
+	}}
+
+	payload, err := json.Marshal(patches)
+	if err != nil {
+		return err
+	}
+
+	logrus.WithField("node", node.Name).Debug("submitting node patch")
+	_, err = mgr.client.CoreV1().Nodes().Patch(ctx, node.Name, apitypes.JSONPatchType, payload, metav1.PatchOptions{})
+	return err
+}
+
+func (mgr *Manager) checkAndMarkNode(ctx context.Context, nodeName string) {
+	obj, exists := getObjectFromStoreByKey(mgr.nodeInformer.GetStore(), nodeName)
+	if !exists {
 		return
 	}
 
-	result := node.DeepCopy()
-	result.Spec.Taints = taints
-
-	logfields := logrus.Fields{"node": node.GetName(), "taint": mgr.cfg.AgentNodeTaint}
-	logrus.WithFields(logfields).Debug("removing agent taint from node")
-	_, err := mgr.client.CoreV1().Nodes().Update(ctx, result, metav1.UpdateOptions{})
-	if err != nil {
-		logrus.WithFields(logfields).WithError(err).Warn("failed updating taints of node")
-	}
-	logrus.WithFields(logfields).Info("agent taint removed from node")
-}
-
-func (mgr *Manager) checkAndRemoveAgentNodeTaint(ctx context.Context, nodeName string) bool {
-	obj, exists, err := mgr.nodeInformer.GetStore().GetByKey(nodeName)
-	if err != nil && !k8sErrors.IsNotFound(err) {
-		return false
-	}
-
-	if !exists || obj == nil {
-		return false
-	}
-
 	node := obj.(*corev1.Node)
-	nodeName = node.GetName()
 
-	logfields := logrus.Fields{"node": nodeName}
-	if hasNodeTaint(node, mgr.cfg.AgentNodeTaint) {
-		if mgr.isAgentPodRunning(nodeName) {
-			logrus.WithField("node", nodeName).Debug("agent pod is up and running")
-			mgr.removeAgentNodeTaint(ctx, node)
+	if hasTaintWithKey(node, mgr.cfg.AgentNodeTaint) && mgr.isAgentRunning(node.Name) {
+		if err := mgr.markNodeAsReady(ctx, node); err != nil {
+			logrus.WithField("node", nodeName).WithError(err).Warn("failed marking node as ready")
 		} else {
-			logrus.WithFields(logfields).Debug("agent pod isn't running")
+			logrus.WithField("node", nodeName).Debug("node isn't ready")
 		}
+		logrus.WithField("node", nodeName).Info("marked node as ready")
+		return
 	} else {
-		logrus.WithFields(logfields).Debug("node without agent taint")
+		logrus.WithField("node", nodeName).Debug("node without agent taint")
 	}
 
-	return true
+	return
 }
 
-func (mgr *Manager) processNextAgentPodItem(ctx context.Context, queue workqueue.RateLimitingInterface) bool {
-	key, quit := queue.Get()
-	if quit {
-		return false
-	}
-
-	defer queue.Done(key)
-
-	obj, exists, err := mgr.podInformer.GetStore().GetByKey(key.(string))
-	if err != nil && !k8sErrors.IsNotFound(err) {
-		return true
-	}
-
-	if !exists || obj == nil {
-		queue.Forget(key)
-		return true
+func (mgr *Manager) processNextPodItem(ctx context.Context, key interface{}) bool {
+	obj, exists := getObjectFromStoreByKey(mgr.podInformer.GetStore(), key.(string))
+	if !exists {
+		return ctx.Err() == nil
 	}
 
 	pod := obj.(*corev1.Pod)
-	nodeName := pod.Spec.NodeName
+	mgr.checkAndMarkNode(ctx, pod.Spec.NodeName)
 
-	if !mgr.checkAndRemoveAgentNodeTaint(ctx, nodeName) {
-		queue.Forget(key)
-		return true
-	}
-
-	queue.Forget(key)
-	return true
+	return ctx.Err() == nil
 }
 
-func nodeNameIndexFunc(obj interface{}) ([]string, error) {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		return nil, fmt.Errorf("obj isn't of type *corev1.Pod, got: %T", obj)
-	}
-	return []string{pod.Spec.NodeName}, nil
+func (mgr *Manager) processNextNodeItem(ctx context.Context, key interface{}) bool {
+	mgr.checkAndMarkNode(ctx, key.(string))
+	return ctx.Err() == nil
 }
 
-var (
-	queueKeyFunc    = cache.DeletionHandlingMetaNamespaceKeyFunc
-	nodeNameIndexer = "node-name-indexer"
-)
-
-func (mgr *Manager) watchAgentPods(ctx context.Context) {
+func (mgr *Manager) watchPods(ctx context.Context) {
 	factory := informers.NewSharedInformerFactoryWithOptions(mgr.client, mgr.cfg.ResyncInterval,
-		informers.WithNamespace(mgr.cfg.AgentNamespace),
-		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
-			opts.LabelSelector = mgr.cfg.AgentLabels
-		}))
-	queue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "pod-queue")
-
+		informers.WithNamespace(mgr.cfg.AgentPodNamespace),
+		withLabelSelector(mgr.cfg.AgentPodLabels),
+	)
 	mgr.podInformer = factory.Core().V1().Pods().Informer()
-	mgr.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			key, _ := queueKeyFunc(obj)
-			queue.Add(key)
-		},
-		UpdateFunc: func(_, obj interface{}) {
-			key, _ := queueKeyFunc(obj)
-			queue.Add(key)
-		},
-		DeleteFunc: func(obj interface{}) {
-			key, _ := queueKeyFunc(obj)
-			queue.Done(key)
-		},
-	})
-	mgr.podInformer.AddIndexers(cache.Indexers{nodeNameIndexer: nodeNameIndexFunc})
+
+	queue := NewQueueEventHandler()
+	mgr.podInformer.AddEventHandler(queue.GetEventHandler())
+	mgr.podInformer.AddIndexers(cache.Indexers{nodeNameIndexer: indexByNodeName})
 
 	go mgr.podInformer.Run(ctx.Done())
 	cache.WaitForCacheSync(ctx.Done(), mgr.podInformer.HasSynced)
 
-	for mgr.processNextAgentPodItem(ctx, queue) {
+	for queue.ProcessNextKey(ctx, mgr.processNextPodItem) {
 	}
 }
 
 func (mgr *Manager) watchNodes(ctx context.Context) {
 	factory := informers.NewSharedInformerFactory(mgr.client, mgr.cfg.ResyncInterval)
 	mgr.nodeInformer = factory.Core().V1().Nodes().Informer()
+
+	queue := NewQueueEventHandler()
+	mgr.nodeInformer.AddEventHandler(queue.GetEventHandler())
+
 	go mgr.nodeInformer.Run(ctx.Done())
 	cache.WaitForCacheSync(ctx.Done(), mgr.nodeInformer.HasSynced)
+
+	for queue.ProcessNextKey(ctx, mgr.processNextNodeItem) {
+	}
 }
 
 func (mgr *Manager) Run(ctx context.Context) error {
 	go mgr.watchNodes(ctx)
-	mgr.watchAgentPods(ctx)
+	mgr.watchPods(ctx)
 
 	return ctx.Err()
 }

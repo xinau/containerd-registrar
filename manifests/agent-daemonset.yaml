@@ -30,10 +30,10 @@ spec:
           imagePullPolicy: Always
           args:
             - "agent"
-            - "--binary.name=/usr/bin/containerd"
-            - "--config.file=/etc/containerd/config.toml"
-            - "--registry.path=/etc/containerd/certs.d"
-            - "--registry.hosts=/etc/registrar/hosts.toml"
+            - "--containerd-binary=/usr/bin/containerd"
+            - "--containerd-config-file=/etc/containerd/config.toml"
+            - "--containerd-cri-registry-path=/etc/containerd/certs.d"
+            - "--containerd-cri-registry-files=/etc/registrar/hosts.toml"
           securityContext:
             privileged: true
           volumeMounts:

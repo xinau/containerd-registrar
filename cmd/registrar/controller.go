@@ -18,22 +18,22 @@ var controllerCommand = &cli.Command{
 	Usage: "control containerd registrar pods",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:  "agent.namespace",
-			Usage: "containerd registrar agent namespace",
+			Name:  "agent-node-taint",
+			Usage: "key of agent taint applied to nodes",
+			Value: "node.containerd-registrar.io/agent-not-ready",
+		},
+		&cli.StringFlag{
+			Name:  "agent-pod-namespace",
+			Usage: "namespace to containing registrar agent pods",
 			Value: "kube-system",
 		},
 		&cli.GenericFlag{
-			Name:  "agent.labels",
-			Usage: "containerd registrar agent label selector",
+			Name:  "agent-pod-labels",
+			Usage: "label uniquely matching containerd registrar agent pods",
 			Value: flags.NewLabelSelector("app.kubernetes.io/name=containerd-registrar-agent"),
 		},
-		&cli.StringFlag{
-			Name:  "agent.nodetaint",
-			Usage: "containerd registrar agent node taint",
-			Value: "node.containerd-registrar.io/agent-not-ready",
-		},
 		&cli.DurationFlag{
-			Name:  "resync.interval",
+			Name:  "controller-resync-interval",
 			Usage: "kubernetes informer resync interval duration",
 			Value: time.Minute,
 		},
@@ -59,10 +59,10 @@ var controllerCommand = &cli.Command{
 		}
 
 		mgr := controller.NewManager(clientset, controller.Config{
-			AgentNamespace: ctx.String("agent.namespace"),
-			AgentLabels:    ctx.Value("agent.labels").(string),
-			AgentNodeTaint: ctx.String("agent.nodetaint"),
-			ResyncInterval: ctx.Duration("resync.interval"),
+			AgentNodeTaint:    ctx.String("agent-node-taint"),
+			AgentPodNamespace: ctx.String("agent-pod-namespace"),
+			AgentPodLabels:    ctx.String("agent-pod-labels"),
+			ResyncInterval:    ctx.Duration("controller-resync-interval"),
 		})
 
 		logrus.WithFields(logrus.Fields{"version": version.Version, "revision": version.Revision}).Info("running containerd-registrar controller")

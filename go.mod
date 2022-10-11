@@ -5,7 +5,6 @@ go 1.18
 require k8s.io/api v0.25.2
 
 require (
-	cloud.google.com/go v0.97.0 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
