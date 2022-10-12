@@ -102,6 +102,40 @@ func (mgr *Manager) isAgentRunning(nodeName string) bool {
 	return false
 }
 
+type nodeState string
+
+const (
+	nodeStateNew         nodeState = "new"
+	nodeStatePending     nodeState = "pending"
+	nodeStateInitialized nodeState = "initialized"
+	nodeStateReady       nodeState = "ready"
+	nodeStateUnknown     nodeState = "unknown"
+)
+
+func (mgr *Manager) getNodeState(node *corev1.Node) nodeState {
+	state, ok := node.Annotations[nodeStateAnnotation]
+	isAgentRunning := mgr.isAgentRunning(node.Name)
+	hasAgentTaint := hasTaintWithKey(node, mgr.cfg.AgentNodeTaint)
+
+	if (!ok || nodeState(state) == nodeStateNew) && !isAgentRunning && !hasAgentTaint {
+		return nodeStateNew
+	}
+
+	if !isAgentRunning && hasAgentTaint {
+		return nodeStatePending
+	}
+
+	if isAgentRunning && hasAgentTaint {
+		return nodeStateInitialized
+	}
+
+	if isAgentRunning && !hasAgentTaint {
+		return nodeStateReady
+	}
+
+	return nodeStateUnknown
+}
+
 type patch struct {
 	OP    string      `json:"op,omitempty"`
 	Path  string      `json:"path,omitempty"`
@@ -112,6 +146,39 @@ var escapePatchPath = strings.NewReplacer(
 	"~", "~0",
 	"/", "~1",
 ).Replace
+
+func (mgr *Manager) markNodeAsPending(ctx context.Context, node *corev1.Node) error {
+	var taints []corev1.Taint
+	for _, taint := range node.Spec.Taints {
+		if taint.Key != mgr.cfg.AgentNodeTaint {
+			taints = append(taints, taint)
+		}
+	}
+
+	taints = append(taints, corev1.Taint{
+		Key:    mgr.cfg.AgentNodeTaint,
+		Value:  "true",
+		Effect: corev1.TaintEffectNoSchedule,
+	})
+
+	patches := []patch{{
+		OP:    "replace",
+		Path:  fmt.Sprintf("/metadata/annotations/%s", escapePatchPath(nodeStateAnnotation)),
+		Value: nodeStatePending,
+	}, {
+		OP:    "replace",
+		Path:  "/spec/taints",
+		Value: taints,
+	}}
+
+	payload, err := json.Marshal(patches)
+	if err != nil {
+		return err
+	}
+
+	_, err = mgr.client.CoreV1().Nodes().Patch(ctx, node.Name, apitypes.JSONPatchType, payload, metav1.PatchOptions{})
+	return err
+}
 
 func (mgr *Manager) markNodeAsReady(ctx context.Context, node *corev1.Node) error {
 	var taints []corev1.Taint
@@ -124,7 +191,7 @@ func (mgr *Manager) markNodeAsReady(ctx context.Context, node *corev1.Node) erro
 	patches := []patch{{
 		OP:    "replace",
 		Path:  fmt.Sprintf("/metadata/annotations/%s", escapePatchPath(nodeStateAnnotation)),
-		Value: "complete",
+		Value: nodeStateReady,
 	}, {
 		OP:    "replace",
 		Path:  "/spec/taints",
@@ -136,7 +203,6 @@ func (mgr *Manager) markNodeAsReady(ctx context.Context, node *corev1.Node) erro
 		return err
 	}
 
-	logrus.WithField("node", node.Name).Debug("submitting node patch")
 	_, err = mgr.client.CoreV1().Nodes().Patch(ctx, node.Name, apitypes.JSONPatchType, payload, metav1.PatchOptions{})
 	return err
 }
@@ -148,17 +214,19 @@ func (mgr *Manager) checkAndMarkNode(ctx context.Context, nodeName string) {
 	}
 
 	node := obj.(*corev1.Node)
-
-	if hasTaintWithKey(node, mgr.cfg.AgentNodeTaint) && mgr.isAgentRunning(node.Name) {
+	switch mgr.getNodeState(node) {
+	case nodeStateNew:
+		logrus.WithField("node", node.Name).Debug("marking node as pending")
+		if err := mgr.markNodeAsPending(ctx, node); err != nil {
+			logrus.WithField("node", nodeName).WithError(err).Warn("failed marking node as pending")
+		}
+	case nodeStateInitialized:
+		logrus.WithField("node", node.Name).Debug("marking node as ready")
 		if err := mgr.markNodeAsReady(ctx, node); err != nil {
 			logrus.WithField("node", nodeName).WithError(err).Warn("failed marking node as ready")
-		} else {
-			logrus.WithField("node", nodeName).Debug("node isn't ready")
 		}
-		logrus.WithField("node", nodeName).Info("marked node as ready")
-		return
-	} else {
-		logrus.WithField("node", nodeName).Debug("node without agent taint")
+	case nodeStateUnknown:
+		logrus.WithField("node", nodeName).Warn("node state is unknown")
 	}
 
 	return
