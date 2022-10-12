@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/part-of: containerd-registrar
         app.kubernetes.io/version: latest
     spec:
+      nodeSelector:
+        node.containerd-registrar.io/enabled: "true"
       containers:
         - image: "gcr.io/google-containers/pause:3.2"
           name: pause

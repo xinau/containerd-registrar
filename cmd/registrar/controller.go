@@ -17,6 +17,11 @@ var controllerCommand = &cli.Command{
 	Name:  "controller",
 	Usage: "control containerd registrar pods",
 	Flags: []cli.Flag{
+		&cli.GenericFlag{
+			Name:  "agent-node-labels",
+			Usage: "label uniquely matching containerd registrar agent nodes",
+			Value: flags.NewLabelSelector(""),
+		},
 		&cli.StringFlag{
 			Name:  "agent-node-taint",
 			Usage: "key of agent taint applied to nodes",
@@ -59,6 +64,7 @@ var controllerCommand = &cli.Command{
 		}
 
 		mgr := controller.NewManager(clientset, controller.Config{
+			AgentNodeLabels:   ctx.String("agent-node-labels"),
 			AgentNodeTaint:    ctx.String("agent-node-taint"),
 			AgentPodNamespace: ctx.String("agent-pod-namespace"),
 			AgentPodLabels:    ctx.String("agent-pod-labels"),

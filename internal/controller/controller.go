@@ -60,6 +60,7 @@ func withLabelSelector(ls string) informers.SharedInformerOption {
 }
 
 type Config struct {
+	AgentNodeLabels   string
 	AgentNodeTaint    string
 	AgentPodNamespace string
 	AgentPodLabels    string
@@ -199,7 +200,9 @@ func (mgr *Manager) watchPods(ctx context.Context) {
 }
 
 func (mgr *Manager) watchNodes(ctx context.Context) {
-	factory := informers.NewSharedInformerFactory(mgr.client, mgr.cfg.ResyncInterval)
+	factory := informers.NewSharedInformerFactoryWithOptions(mgr.client, mgr.cfg.ResyncInterval,
+		withLabelSelector(mgr.cfg.AgentNodeLabels),
+	)
 	mgr.nodeInformer = factory.Core().V1().Nodes().Informer()
 
 	queue := NewQueueEventHandler()

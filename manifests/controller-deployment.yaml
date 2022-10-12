@@ -27,6 +27,7 @@ spec:
         imagePullPolicy: Always
         args:
           - "controller"
+          - "--agent-node-labels=node.containerd-registrar.io/enabled=true"
           - "--agent-node-taint-key=node.containerd-registrar.io/agent-not-ready"
           - "--agent-pod-namespace=kube-system"
           - "--agent-pod-labels=app.kubernetes.io/name=containerd-registrar-controller"
