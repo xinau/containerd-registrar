@@ -93,7 +93,7 @@ func (mgr *Manager) isAgentRunning(nodeName string) bool {
 	for _, obj := range pods {
 		pod := obj.(*corev1.Pod)
 		for _, cond := range pod.Status.Conditions {
-			if cond.Type == corev1.PodReady {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
 				return true
 			}
 		}
