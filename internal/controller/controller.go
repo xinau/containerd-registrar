@@ -114,10 +114,12 @@ const (
 
 func (mgr *Manager) getNodeState(node *corev1.Node) nodeState {
 	state, ok := node.Annotations[nodeStateAnnotation]
+	nodeState := nodeState(state)
+
 	isAgentRunning := mgr.isAgentRunning(node.Name)
 	hasAgentTaint := hasTaintWithKey(node, mgr.cfg.AgentNodeTaint)
 
-	if (!ok || nodeState(state) == nodeStateNew) && !isAgentRunning && !hasAgentTaint {
+	if (!ok || nodeState == nodeStateNew) && !isAgentRunning && !hasAgentTaint {
 		return nodeStateNew
 	}
 
@@ -148,27 +150,34 @@ var escapePatchPath = strings.NewReplacer(
 ).Replace
 
 func (mgr *Manager) markNodeAsPending(ctx context.Context, node *corev1.Node) error {
+	var found bool
 	var taints []corev1.Taint
 	for _, taint := range node.Spec.Taints {
-		if taint.Key != mgr.cfg.AgentNodeTaint {
-			taints = append(taints, taint)
+		if taint.Key == mgr.cfg.AgentNodeTaint {
+			found = true
+			break
 		}
+
+		taints = append(taints, taint)
 	}
 
-	taints = append(taints, corev1.Taint{
-		Key:    mgr.cfg.AgentNodeTaint,
-		Value:  "true",
-		Effect: corev1.TaintEffectNoSchedule,
-	})
+	if found {
+		logrus.WithField("node", node.Name).Debug("taint already found on node")
+	}
+	logrus.WithField("node", node.Name).Debug("adding agent taint and update node state to pending")
 
 	patches := []patch{{
 		OP:    "replace",
 		Path:  fmt.Sprintf("/metadata/annotations/%s", escapePatchPath(nodeStateAnnotation)),
 		Value: nodeStatePending,
 	}, {
-		OP:    "replace",
-		Path:  "/spec/taints",
-		Value: taints,
+		OP:   "replace",
+		Path: "/spec/taints",
+		Value: append(taints, corev1.Taint{
+			Key:    mgr.cfg.AgentNodeTaint,
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}),
 	}}
 
 	payload, err := json.Marshal(patches)
@@ -181,12 +190,21 @@ func (mgr *Manager) markNodeAsPending(ctx context.Context, node *corev1.Node) er
 }
 
 func (mgr *Manager) markNodeAsReady(ctx context.Context, node *corev1.Node) error {
+	var found bool
 	var taints []corev1.Taint
 	for _, taint := range node.Spec.Taints {
 		if taint.Key != mgr.cfg.AgentNodeTaint {
-			taints = append(taints, taint)
+			found = true
+			break
 		}
+
+		taints = append(taints, taint)
 	}
+
+	if !found {
+		logrus.WithField("node", node.Name).Debug("agent taint not found on node")
+	}
+	logrus.WithField("node", node.Name).Debug("removing agent taint and update node state to ready")
 
 	patches := []patch{{
 		OP:    "replace",
