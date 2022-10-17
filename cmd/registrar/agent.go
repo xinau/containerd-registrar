@@ -49,7 +49,7 @@ var agentCommand = &cli.Command{
 			BinaryName:     ctx.String("containerd-binary"),
 			ConfigFile:     ctx.String("containerd-config-file"),
 			RegistryPath:   ctx.String("containerd-cri-registry-path"),
-			RegistryHosts:  ctx.StringSlice("containerd-cri-registry-files"),
+			RegistryHosts:  ctx.Value("containerd-cri-registry-files").([]string),
 			RestartTimeout: ctx.Duration("restart.timout"),
 		})
 
